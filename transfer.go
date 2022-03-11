@@ -110,6 +110,8 @@ func (r TransferResponse) AsError() error {
 	return ResponseError(r.Response)
 }
 
+// Query existing transaction. Docs:
+// https://pay.weixin.qq.com/wiki/doc/api/tools/mch_pay.php?chapter=14_3
 func (client *Client) TransferQuery(ctx context.Context, req TransferQueryRequest) (*TransferQueryResponse, error) {
 	var res TransferQueryResponse
 	if err := client.postXml(ctx, transferQueryUrl, req, &res); err != nil {
