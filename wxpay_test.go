@@ -84,9 +84,28 @@ func TestTransfer(t *testing.T) {
 		Desc:           "测试",
 	})
 	if err != nil {
-		t.Error("expected error to be nil")
+		t.Error("expected error to be nil:", err)
 	} else {
-		t.Log("Success =", resp.Success())
 		t.Logf("%+v", resp)
+		if resp.Success() != true {
+			t.Error("expected resp to be success")
+		} else {
+			t.Log("Transfer() test passed")
+		}
+	}
+
+	resp2, err := client.TransferQuery(ctx, TransferQueryRequest{
+		AppId:          config.Appid,
+		PartnerTradeNo: tradeNo,
+	})
+	if err != nil {
+		t.Error("expected error to be nil:", err)
+	} else {
+		t.Logf("%+v", resp2)
+		if resp2.Success() != true {
+			t.Error("expected resp to be success")
+		} else {
+			t.Log("TransferQuery() test passed")
+		}
 	}
 }

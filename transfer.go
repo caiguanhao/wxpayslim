@@ -1,71 +1,26 @@
 package wxpayslim
 
 import (
-	"bytes"
 	"context"
 	"crypto/md5"
 	"encoding/xml"
 	"fmt"
-	"io/ioutil"
-	"log"
-	"net/http"
-	"net/http/httputil"
 	"strconv"
-	"strings"
 )
 
-const transferUrl = prefix + "/mmpaymkttransfers/promotion/transfers"
+const (
+	transferUrl      = prefix + "/mmpaymkttransfers/promotion/transfers"
+	transferQueryUrl = prefix + "/mmpaymkttransfers/gettransferinfo"
+)
 
 // Transfer money to user. Docs:
 // https://pay.weixin.qq.com/wiki/doc/api/tools/mch_pay.php?chapter=14_2
 func (client *Client) Transfer(ctx context.Context, req TransferRequest) (*TransferResponse, error) {
-	xmlData, err := xml.MarshalIndent(req.toXml(client), "", "  ")
-	if err != nil {
-		return nil, err
-	}
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", transferUrl, bytes.NewBuffer(xmlData))
-	if err != nil {
-		return nil, err
-	}
-	if client.Debug {
-		dump, err := httputil.DumpRequestOut(httpReq, true)
-		if err != nil {
-			return nil, err
-		}
-		log.Println(string(dump))
-	}
-	httpClient := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: client.TLSClientConfig,
-		},
-	}
-	resp, err := httpClient.Do(httpReq)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if client.Debug {
-		dumpBody := strings.Contains(resp.Header.Get("Content-Type"), "text/")
-		dump, err := httputil.DumpResponse(resp, dumpBody)
-		if err != nil {
-			return nil, err
-		}
-		log.Println(string(dump))
-	}
-	b, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
 	var res TransferResponse
-	err = xml.Unmarshal(b, &res)
-	if err != nil {
+	if err := client.postXml(ctx, transferUrl, req, &res); err != nil {
 		return nil, err
 	}
-	if res.Success() {
-		return &res, nil
-	} else {
-		return nil, ResponseError(res.Response)
-	}
+	return &res, nil
 }
 
 // TransferRequest is used in Transfer() function.
@@ -81,7 +36,9 @@ type TransferRequest struct {
 	SpbillCreateIp string // optional, user's IP address
 }
 
-func (r TransferRequest) toXml(client *Client) transferRequestXml {
+var _ requestable = (*TransferRequest)(nil)
+
+func (r TransferRequest) toXml(client *Client) requestXml {
 	checkName := r.CheckName
 	if checkName == "" {
 		checkName = "NO_CHECK"
@@ -145,4 +102,79 @@ type TransferResponse struct {
 	PartnerTradeNo string    `xml:"partner_trade_no"`
 	PaymentNo      string    `xml:"payment_no"`
 	PaymentTime    *Utc8Time `xml:"payment_time"`
+}
+
+var _ responsible = (*TransferResponse)(nil)
+
+func (r TransferResponse) AsError() error {
+	return ResponseError(r.Response)
+}
+
+func (client *Client) TransferQuery(ctx context.Context, req TransferQueryRequest) (*TransferQueryResponse, error) {
+	var res TransferQueryResponse
+	if err := client.postXml(ctx, transferQueryUrl, req, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+// TransferQueryRequest is used in TransferQuery() function.
+type TransferQueryRequest struct {
+	AppId          string // required
+	PartnerTradeNo string // required
+}
+
+var _ requestable = (*TransferQueryRequest)(nil)
+
+func (r TransferQueryRequest) toXml(client *Client) requestXml {
+	req := transferQueryRequestXml{
+		AppId:          r.AppId,
+		MchId:          client.MchId,
+		NonceStr:       randomStr(32),
+		PartnerTradeNo: r.PartnerTradeNo,
+	}
+	req.Sign = req.generateSign(client)
+	return req
+}
+
+type transferQueryRequestXml struct {
+	XMLName        xml.Name `xml:"xml"`
+	AppId          string   `xml:"appid"`
+	MchId          string   `xml:"mch_id"`
+	NonceStr       string   `xml:"nonce_str"`
+	Sign           string   `xml:"sign"`
+	PartnerTradeNo string   `xml:"partner_trade_no"`
+}
+
+func (r transferQueryRequestXml) generateSign(client *Client) string {
+	params := map[string]string{
+		"appid":            r.AppId,
+		"mch_id":           r.MchId,
+		"nonce_str":        r.NonceStr,
+		"partner_trade_no": r.PartnerTradeNo,
+	}
+	str := paramsToString(params) + "&key=" + client.Key
+	return fmt.Sprintf("%X", md5.Sum([]byte(str)))
+}
+
+type TransferQueryResponse struct {
+	Response
+	AppId          string    `xml:"appid,omitempty"`
+	MchId          string    `xml:"mch_id,omitempty"`
+	DetailId       string    `xml:"detail_id,omitempty"`
+	Status         string    `xml:"status,omitempty"`
+	Reason         string    `xml:"reason,omitempty"`
+	OpenId         string    `xml:"openid,omitempty"`
+	TransferName   string    `xml:"transfer_name,omitempty"`
+	PartnerTradeNo string    `xml:"partner_trade_no"`
+	PaymentAmount  int       `xml:"payment_amount"`
+	TransferTime   *Utc8Time `xml:"transfer_time"`
+	PaymentTime    *Utc8Time `xml:"payment_time"`
+	Desc           string    `xml:"desc"`
+}
+
+var _ responsible = (*TransferQueryResponse)(nil)
+
+func (r TransferQueryResponse) AsError() error {
+	return ResponseError(r.Response)
 }

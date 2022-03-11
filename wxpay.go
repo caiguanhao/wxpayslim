@@ -2,10 +2,16 @@ package wxpayslim
 
 import (
 	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/xml"
+	"io/ioutil"
+	"log"
 	"math/rand"
+	"net/http"
+	"net/http/httputil"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -40,6 +46,66 @@ func (client *Client) SetCertificate(certPEM, keyPem string) error {
 		Certificates: []tls.Certificate{cert},
 	}
 	return nil
+}
+
+type requestXml interface{}
+
+type requestable interface {
+	toXml(client *Client) requestXml
+}
+
+type responsible interface {
+	Success() bool
+	AsError() error
+}
+
+func (client *Client) postXml(ctx context.Context, url string, object requestable, res responsible) error {
+	xmlData, err := xml.MarshalIndent(object.toXml(client), "", "  ")
+	if err != nil {
+		return err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(xmlData))
+	if err != nil {
+		return err
+	}
+	if client.Debug {
+		dump, err := httputil.DumpRequestOut(httpReq, true)
+		if err != nil {
+			return err
+		}
+		log.Println(string(dump))
+	}
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: client.TLSClientConfig,
+		},
+	}
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if client.Debug {
+		dumpBody := strings.Contains(resp.Header.Get("Content-Type"), "text/")
+		dump, err := httputil.DumpResponse(resp, dumpBody)
+		if err != nil {
+			return err
+		}
+		log.Println(string(dump))
+	}
+	b, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	err = xml.Unmarshal(b, res)
+	if err != nil {
+		return err
+	}
+	if res.Success() {
+		return nil
+	} else {
+		return res.AsError()
+	}
 }
 
 type Response struct {
