@@ -3,14 +3,17 @@ package wxpayslim
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"crypto/tls"
 	"encoding/json"
 	"encoding/xml"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"math/rand"
 	"net/http"
 	"net/http/httputil"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -109,6 +112,11 @@ func (client *Client) postXml(ctx context.Context, url string, object requestabl
 	}
 }
 
+func (client Client) generateSign(object interface{}) string {
+	str := structToString(object) + "&key=" + client.Key
+	return fmt.Sprintf("%X", md5.Sum([]byte(str)))
+}
+
 type Response struct {
 	ReturnCode string `xml:"return_code"`
 	ReturnMsg  string `xml:"return_msg"`
@@ -131,26 +139,44 @@ func (r ResponseError) Error() string {
 	return r.ErrCode + ": " + r.ErrCodeDes
 }
 
-func paramsToString(params map[string]string) string {
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		if k == "sign" {
+func structToString(s interface{}) string {
+	rv := reflect.ValueOf(s)
+	rt := reflect.TypeOf(s)
+	names := []string{}
+	values := map[string]string{}
+	for i := 0; i < rt.NumField(); i++ {
+		f := rt.Field(i)
+		if f.Name == "XMLName" {
 			continue
 		}
-		keys = append(keys, k)
+		name := f.Tag.Get("xml")
+		if name == "-" {
+			continue
+		}
+		if i := strings.Index(name, " "); i >= 0 {
+			name = name[i+1:]
+		}
+		if tokens := strings.Split(name, ","); len(tokens) > 1 {
+			name = tokens[0]
+		}
+		if name == "sign" {
+			continue
+		}
+		names = append(names, name)
+		values[name] = fmt.Sprint(rv.Field(i).Interface())
 	}
-	sort.Strings(keys)
+	sort.Strings(names)
 	var buf bytes.Buffer
-	for _, k := range keys {
-		if params[k] == "" {
+	for _, name := range names {
+		if values[name] == "" {
 			continue
 		}
 		if buf.Len() > 0 {
 			buf.WriteByte('&')
 		}
-		buf.WriteString(k)
+		buf.WriteString(name)
 		buf.WriteByte('=')
-		buf.WriteString(params[k])
+		buf.WriteString(values[name])
 	}
 	return buf.String()
 }

@@ -2,10 +2,7 @@ package wxpayslim
 
 import (
 	"context"
-	"crypto/md5"
 	"encoding/xml"
-	"fmt"
-	"strconv"
 )
 
 const (
@@ -56,7 +53,7 @@ func (r TransferRequest) toXml(client *Client) requestXml {
 		Desc:           r.Desc,
 		SpbillCreateIp: r.SpbillCreateIp,
 	}
-	req.Sign = req.generateSign(client)
+	req.Sign = client.generateSign(req)
 	return req
 }
 
@@ -74,24 +71,6 @@ type transferRequestXml struct {
 	Amount         int      `xml:"amount"`
 	Desc           string   `xml:"desc"`
 	SpbillCreateIp string   `xml:"spbill_create_ip,omitempty"`
-}
-
-func (r transferRequestXml) generateSign(client *Client) string {
-	params := map[string]string{
-		"mch_appid":        r.AppId,
-		"mchid":            r.MchId,
-		"device_info":      r.DeviceInfo,
-		"nonce_str":        r.NonceStr,
-		"partner_trade_no": r.PartnerTradeNo,
-		"openid":           r.OpenId,
-		"check_name":       r.CheckName,
-		"re_user_name":     r.ReUserName,
-		"amount":           strconv.Itoa(r.Amount),
-		"desc":             r.Desc,
-		"spbill_create_ip": r.SpbillCreateIp,
-	}
-	str := paramsToString(params) + "&key=" + client.Key
-	return fmt.Sprintf("%X", md5.Sum([]byte(str)))
 }
 
 type TransferResponse struct {
@@ -135,7 +114,7 @@ func (r TransferQueryRequest) toXml(client *Client) requestXml {
 		NonceStr:       randomStr(32),
 		PartnerTradeNo: r.PartnerTradeNo,
 	}
-	req.Sign = req.generateSign(client)
+	req.Sign = client.generateSign(req)
 	return req
 }
 
@@ -146,17 +125,6 @@ type transferQueryRequestXml struct {
 	NonceStr       string   `xml:"nonce_str"`
 	Sign           string   `xml:"sign"`
 	PartnerTradeNo string   `xml:"partner_trade_no"`
-}
-
-func (r transferQueryRequestXml) generateSign(client *Client) string {
-	params := map[string]string{
-		"appid":            r.AppId,
-		"mch_id":           r.MchId,
-		"nonce_str":        r.NonceStr,
-		"partner_trade_no": r.PartnerTradeNo,
-	}
-	str := paramsToString(params) + "&key=" + client.Key
-	return fmt.Sprintf("%X", md5.Sum([]byte(str)))
 }
 
 type TransferQueryResponse struct {
