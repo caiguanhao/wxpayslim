@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"encoding/xml"
 	"io/ioutil"
 	"log"
@@ -169,6 +170,20 @@ type Utc8Time time.Time
 
 func (tm Utc8Time) String() string {
 	return time.Time(tm).String()
+}
+
+func (tm Utc8Time) MarshalJSON() ([]byte, error) {
+	return json.Marshal(time.Time(tm))
+}
+
+func (tm *Utc8Time) UnmarshalJSON(data []byte) error {
+	var t time.Time
+	err := json.Unmarshal(data, &t)
+	if err != nil {
+		return err
+	}
+	*tm = Utc8Time(t)
+	return nil
 }
 
 func (tm *Utc8Time) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
