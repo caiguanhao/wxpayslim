@@ -36,23 +36,15 @@ type TransferRequest struct {
 var _ requestable = (*TransferRequest)(nil)
 
 func (r TransferRequest) toXml(client *Client) requestXml {
+	req := transferRequestXml{}
+	copyFields(r, &req)
+	req.MchId = client.MchId
+	req.NonceStr = randomStr(32)
 	checkName := r.CheckName
 	if checkName == "" {
 		checkName = "NO_CHECK"
 	}
-	req := transferRequestXml{
-		AppId:          r.AppId,
-		MchId:          client.MchId,
-		DeviceInfo:     r.DeviceInfo,
-		NonceStr:       randomStr(32),
-		PartnerTradeNo: r.PartnerTradeNo,
-		OpenId:         r.OpenId,
-		CheckName:      checkName,
-		ReUserName:     r.ReUserName,
-		Amount:         r.Amount,
-		Desc:           r.Desc,
-		SpbillCreateIp: r.SpbillCreateIp,
-	}
+	req.CheckName = checkName
 	req.Sign = client.generateSign(req)
 	return req
 }
@@ -108,12 +100,10 @@ type TransferQueryRequest struct {
 var _ requestable = (*TransferQueryRequest)(nil)
 
 func (r TransferQueryRequest) toXml(client *Client) requestXml {
-	req := transferQueryRequestXml{
-		AppId:          r.AppId,
-		MchId:          client.MchId,
-		NonceStr:       randomStr(32),
-		PartnerTradeNo: r.PartnerTradeNo,
-	}
+	req := transferQueryRequestXml{}
+	copyFields(r, &req)
+	req.MchId = client.MchId
+	req.NonceStr = randomStr(32)
 	req.Sign = client.generateSign(req)
 	return req
 }

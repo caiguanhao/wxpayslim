@@ -139,6 +139,16 @@ func (r ResponseError) Error() string {
 	return r.ErrCode + ": " + r.ErrCodeDes
 }
 
+func copyFields(from, to interface{}) {
+	fromRV := reflect.ValueOf(from)
+	fromRT := reflect.TypeOf(from)
+	toRV := reflect.ValueOf(to).Elem()
+	for i := 0; i < fromRT.NumField(); i++ {
+		f := fromRT.Field(i)
+		toRV.FieldByName(f.Name).Set(fromRV.FieldByName(f.Name))
+	}
+}
+
 func structToString(s interface{}) string {
 	rv := reflect.ValueOf(s)
 	rt := reflect.TypeOf(s)
