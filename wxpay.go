@@ -121,6 +121,7 @@ type Response struct {
 	ReturnCode string `xml:"return_code"`
 	ReturnMsg  string `xml:"return_msg"`
 	NonceStr   string `xml:"nonce_str,omitempty"`
+	Sign       string `xml:"sign,omitempty"`
 	ResultCode string `xml:"result_code,omitempty"`
 	ErrCode    string `xml:"err_code,omitempty"`
 	ErrCodeDes string `xml:"err_code_des,omitempty"`

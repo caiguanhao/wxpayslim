@@ -52,6 +52,24 @@ func init() {
 	}
 }
 
+func TestCreateOrder(t *testing.T) {
+	ctx := context.Background()
+	resp, err := client.CreateOrder(ctx, CreateOrderRequest{
+		AppId:          config.Appid,
+		Body:           "test",
+		OutTradeNo:     randomStr(32),
+		TotalFee:       1,
+		SpbillCreateIp: "127.0.0.1",
+		NotifyURL:      "http://localhost/",
+		TradeType:      "NATIVE",
+		ProductId:      randomStr(32),
+	})
+	if err != nil {
+		t.Error("expected error to be nil:", err)
+	}
+	t.Log("qrcode url", resp.CodeUrl)
+}
+
 func TestTransfer(t *testing.T) {
 	if client == nil {
 		t.Log("client is not initialized, skipped")
