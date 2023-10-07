@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"math/rand"
+	"os"
 	"time"
 
 	"github.com/caiguanhao/wxpayslim"
@@ -19,6 +21,7 @@ func main() {
 	fee := flag.Int("fee", 1, "payment total fee")
 	outTradeNo := flag.String("no", "", "out trade no, random string if empty")
 	notifyUrl := flag.String("url", "http://localhost/", "notify url")
+	isQuery := flag.Bool("query", false, "query (instead of create) order")
 	flag.Parse()
 
 	if *outTradeNo == "" {
@@ -27,6 +30,21 @@ func main() {
 	}
 
 	client := wxpayslim.NewClient(*mchid, *key)
+	fmt.Fprintln(os.Stderr, "OutTradeNo:", *outTradeNo)
+	if *isQuery {
+		resp, err := client.QueryOrder(context.Background(), wxpayslim.QueryOrderRequest{
+			AppId:      *appid,
+			OutTradeNo: *outTradeNo,
+		})
+		if err != nil {
+			log.Fatalln(err)
+		}
+		json.NewEncoder(os.Stderr).Encode(resp)
+		if resp.TradeState != "SUCCESS" {
+			os.Exit(1)
+		}
+		return
+	}
 	resp, err := client.CreateOrder(context.Background(), wxpayslim.CreateOrderRequest{
 		AppId:          *appid,
 		Body:           *body,
