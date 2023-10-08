@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/md5"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"net/http/httputil"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -41,6 +43,10 @@ func NewClient(mchId, key string) *Client {
 // CERTIFICATE-----) and private key (apiclient_key.pem, string starts with
 // -----BEGIN PRIVATE KEY-----). If you have different certificate format, set
 // client's TLSClientConfig property directly.
+//
+// If you have p12 file (apiclient_cert.p12), you can use following command to
+// get certificate and private key:
+//     openssl pkcs12 -in apiclient_cert.p12 -nodes
 func (client *Client) SetCertificate(certPEM, keyPem string) error {
 	cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPem))
 	if err != nil {
@@ -50,6 +56,13 @@ func (client *Client) SetCertificate(certPEM, keyPem string) error {
 		Certificates: []tls.Certificate{cert},
 	}
 	return nil
+}
+
+// MustSetCertificate is like SetCertificate but panics if operation fails.
+func (client *Client) MustSetCertificate(certPEM, keyPem string) {
+	if err := client.SetCertificate(certPEM, keyPem); err != nil {
+		panic(err)
+	}
 }
 
 type requestXml interface{}
@@ -201,6 +214,33 @@ func randomStr(length int) string {
 		result = append(result, bytes[r.Intn(len(bytes))])
 	}
 	return string(result)
+}
+
+type JSAPIPayParams struct {
+	AppId     string `json:"appId"`
+	TimeStamp string `json:"timeStamp"`
+	NonceStr  string `json:"nonceStr"`
+	Package   string `json:"package"`
+	SignType  string `json:"signType"`
+	PaySign   string `json:"paySign"`
+}
+
+// Generate pay params for JSAPI.
+func (client *Client) JSAPIPayParams(appId, prepayId string) *JSAPIPayParams {
+	p := &JSAPIPayParams{
+		AppId:     appId,
+		TimeStamp: strconv.FormatInt(time.Now().Unix(), 10),
+		NonceStr:  randomStr(32),
+		Package:   "prepay_id=" + prepayId,
+		SignType:  "MD5",
+	}
+	h := md5.New()
+	str := "appId=" + p.AppId + "&nonceStr=" + p.NonceStr +
+		"&package=" + p.Package + "&signType=" + p.SignType +
+		"&timeStamp=" + p.TimeStamp + "&key=" + client.Key
+	h.Write([]byte(str))
+	p.PaySign = strings.ToUpper(hex.EncodeToString(h.Sum(nil)))
+	return p
 }
 
 type Utc8Time time.Time

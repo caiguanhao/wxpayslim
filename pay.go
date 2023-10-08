@@ -10,6 +10,7 @@ const (
 	queryOrderUrl  = prefix + "/pay/orderquery"
 )
 
+// CreateOrder initiates payment.
 func (client *Client) CreateOrder(ctx context.Context, req CreateOrderRequest) (*CreateOrderResponse, error) {
 	var res CreateOrderResponse
 	if err := client.postXml(ctx, createOrderUrl, req, &res); err != nil {
@@ -97,6 +98,7 @@ func (r CreateOrderResponse) AsError() error {
 	return ResponseError(r.Response)
 }
 
+// QueryOrder gets information of an order by Transaction ID or Trade No.
 func (client *Client) QueryOrder(ctx context.Context, req QueryOrderRequest) (*QueryOrderResponse, error) {
 	var res QueryOrderResponse
 	if err := client.postXml(ctx, queryOrderUrl, req, &res); err != nil {
@@ -162,4 +164,9 @@ var _ responsible = (*QueryOrderResponse)(nil)
 
 func (r QueryOrderResponse) AsError() error {
 	return ResponseError(r.Response)
+}
+
+// Check if order is successfully paid.
+func (r QueryOrderResponse) Paid() bool {
+	return r.ReturnCode == "SUCCESS" && r.ResultCode == "SUCCESS" && r.TradeState == "SUCCESS"
 }
