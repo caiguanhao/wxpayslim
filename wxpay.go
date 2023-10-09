@@ -127,6 +127,9 @@ func (client *Client) postXml(ctx context.Context, url string, object requestabl
 
 func (client Client) generateSign(object interface{}) string {
 	str := structToString(object) + "&key=" + client.Key
+	if client.Debug {
+		log.Println("string to sign", str)
+	}
 	return fmt.Sprintf("%X", md5.Sum([]byte(str)))
 }
 
@@ -148,6 +151,9 @@ type ResponseError Response
 
 func (r ResponseError) Error() string {
 	if r.ErrCode == "" {
+		if r.ReturnCode != "" && r.ReturnMsg != "" {
+			return r.ReturnCode + " (" + r.ReturnMsg + ")"
+		}
 		return "UNKNOWN"
 	}
 	return r.ErrCode + ": " + r.ErrCodeDes
@@ -180,10 +186,20 @@ func structToString(s interface{}) string {
 		if i := strings.Index(name, " "); i >= 0 {
 			name = name[i+1:]
 		}
+		var isOmitempty bool
 		if tokens := strings.Split(name, ","); len(tokens) > 1 {
 			name = tokens[0]
+			for _, t := range tokens[1:] {
+				if t == "omitempty" {
+					isOmitempty = true
+					break
+				}
+			}
 		}
 		if name == "sign" {
+			continue
+		}
+		if isOmitempty && rv.Field(i).IsZero() {
 			continue
 		}
 		names = append(names, name)
@@ -192,9 +208,6 @@ func structToString(s interface{}) string {
 	sort.Strings(names)
 	var buf bytes.Buffer
 	for _, name := range names {
-		if values[name] == "" {
-			continue
-		}
 		if buf.Len() > 0 {
 			buf.WriteByte('&')
 		}

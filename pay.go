@@ -8,6 +8,8 @@ import (
 const (
 	createOrderUrl = prefix + "/pay/unifiedorder"
 	queryOrderUrl  = prefix + "/pay/orderquery"
+	refundOrderUrl = prefix + "/secapi/pay/refund"
+	queryRefundUrl = prefix + "/pay/refundquery"
 )
 
 // CreateOrder initiates payment.
@@ -169,4 +171,161 @@ func (r QueryOrderResponse) AsError() error {
 // Check if order is successfully paid.
 func (r QueryOrderResponse) Paid() bool {
 	return r.ReturnCode == "SUCCESS" && r.ResultCode == "SUCCESS" && r.TradeState == "SUCCESS"
+}
+
+// RefundOrder initiates refund. Need to set certificate (client.SetCertificate) first.
+func (client *Client) RefundOrder(ctx context.Context, req RefundOrderRequest) (*RefundOrderResponse, error) {
+	var res RefundOrderResponse
+	if err := client.postXml(ctx, refundOrderUrl, req, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+type RefundOrderRequest struct {
+	AppId         string // required
+	SignType      string // optional, either MD5 (default) or HMAC-SHA256
+	TransactionId string // either TransactionId or OutTradeNo is required
+	OutTradeNo    string
+	OutRefundNo   string // required, max length is 64
+	TotalFee      int    // required, in cents
+	RefundFee     int    // required, in cents
+	RefundFeeType string // optional, defaults to CNY
+	RefundDesc    string // optional
+	RefundAccount string // optional
+	NotifyURL     string // optional
+}
+
+var _ requestable = (*RefundOrderRequest)(nil)
+
+func (r RefundOrderRequest) toXml(client *Client) requestXml {
+	req := refundOrderRequestXml{}
+	copyFields(r, &req)
+	req.MchId = client.MchId
+	req.NonceStr = randomStr(32)
+	req.Sign = client.generateSign(req)
+	return req
+}
+
+type refundOrderRequestXml struct {
+	XMLName       xml.Name `xml:"xml"`
+	AppId         string   `xml:"appid"`
+	MchId         string   `xml:"mch_id"`
+	NonceStr      string   `xml:"nonce_str"`
+	Sign          string   `xml:"sign"`
+	SignType      string   `xml:"sign_type,omitempty"`
+	TransactionId string   `xml:"transaction_id,omitempty"`
+	OutTradeNo    string   `xml:"out_trade_no,omitempty"`
+	OutRefundNo   string   `xml:"out_refund_no"`
+	TotalFee      int      `xml:"total_fee"`
+	RefundFee     int      `xml:"refund_fee"`
+	RefundFeeType string   `xml:"refund_fee_type,omitempty"`
+	RefundDesc    string   `xml:"refund_desc,omitempty"`
+	RefundAccount string   `xml:"refund_account,omitempty"`
+	NotifyURL     string   `xml:"notify_url,omitempty"`
+}
+
+type RefundOrderResponse struct {
+	Response
+	AppId               string `xml:"appid,omitempty"`
+	MchId               string `xml:"mch_id,omitempty"`
+	TransactionId       string `xml:"transaction_id"`
+	OutTradeNo          string `xml:"out_trade_no"`
+	OutRefundNo         string `xml:"out_refund_no"`
+	RefundId            string `xml:"refund_id"`
+	RefundFee           int    `xml:"refund_fee"`
+	SettlementRefundFee int    `xml:"settlement_refund_fee"`
+	TotalFee            int    `xml:"total_fee"`
+	SettlementTotalFee  int    `xml:"settlement_total_fee"`
+	FeeType             string `xml:"fee_type"`
+	CashFee             int    `xml:"cash_fee"`
+	CashFeeType         string `xml:"cash_fee_type"`
+	CashRefundFee       int    `xml:"cash_refund_fee"`
+}
+
+var _ responsible = (*RefundOrderResponse)(nil)
+
+func (r RefundOrderResponse) AsError() error {
+	return ResponseError(r.Response)
+}
+
+// QueryRefundOrder gets information of a refund order by Transaction ID or Trade No.
+func (client *Client) QueryRefundOrder(ctx context.Context, req QueryRefundOrderRequest) (*QueryRefundOrderResponse, error) {
+	var res QueryRefundOrderResponse
+	if err := client.postXml(ctx, queryRefundUrl, req, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+type QueryRefundOrderRequest struct {
+	AppId         string // required
+	TransactionId string // either TransactionId, OutTradeNo, OutRefundNo or RefundId is required
+	OutTradeNo    string
+	OutRefundNo   string
+	RefundId      string
+	Offset        int // optional
+}
+
+var _ requestable = (*QueryRefundOrderRequest)(nil)
+
+func (r QueryRefundOrderRequest) toXml(client *Client) requestXml {
+	req := queryRefundOrderRequestXml{}
+	copyFields(r, &req)
+	req.MchId = client.MchId
+	req.NonceStr = randomStr(32)
+	req.Sign = client.generateSign(req)
+	return req
+}
+
+type queryRefundOrderRequestXml struct {
+	XMLName       xml.Name `xml:"xml"`
+	AppId         string   `xml:"appid"`
+	MchId         string   `xml:"mch_id"`
+	NonceStr      string   `xml:"nonce_str"`
+	Sign          string   `xml:"sign"`
+	SignType      string   `xml:"sign_type,omitempty"`
+	TransactionId string   `xml:"transaction_id,omitempty"`
+	OutTradeNo    string   `xml:"out_trade_no,omitempty"`
+	OutRefundNo   string   `xml:"out_refund_no,omitempty"`
+	RefundId      string   `xml:"refund_id,omitempty"`
+	Offset        int      `xml:"offset,omitempty"`
+}
+
+type QueryRefundOrderResponse struct {
+	Response
+	AppId string `xml:"appid"`
+	MchId string `xml:"mch_id"`
+
+	TotalRefundCount     int    `xml:"total_refund_count"`
+	TransactionId        string `xml:"transaction_id"`
+	OutTradeNo           string `xml:"out_trade_no"`
+	TotalFee             int    `xml:"total_fee"`
+	SettlementTotalFee   int    `xml:"settlement_total_fee"`
+	FeeType              string `xml:"fee_type,omitempty"`
+	CashFee              int    `xml:"cash_fee"`
+	RefundCount          int    `xml:"refund_count"`
+	OutRefundNo0         string `xml:"out_refund_no_0"`
+	RefundId0            string `xml:"refund_id_0"`
+	RefundChannel0       string `xml:"refund_channel_0"`
+	RefundFee0           int    `xml:"refund_fee_0"`
+	RefundFee            int    `xml:"refund_fee"`
+	CouponRefundFee      int    `xml:"coupon_refund_fee"`
+	SettlementRefundFee0 int    `xml:"settlement_refund_fee_0"`
+	RefundStatus0        string `xml:"refund_status_0"`
+	RefundAccount0       string `xml:"refund_account_0"`
+	RefundRecvAccout0    string `xml:"refund_recv_accout_0"`
+	RefundSuccessTime0   string `xml:"refund_success_time_0"`
+	CashRefundFee        int    `xml:"cash_refund_fee"`
+}
+
+var _ responsible = (*QueryRefundOrderResponse)(nil)
+
+func (r QueryRefundOrderResponse) AsError() error {
+	return ResponseError(r.Response)
+}
+
+// Check if order is successfully refunded.
+func (r QueryRefundOrderResponse) Refunded() bool {
+	return r.ReturnCode == "SUCCESS" && r.ResultCode == "SUCCESS" && r.RefundStatus0 == "SUCCESS"
 }
