@@ -3,7 +3,9 @@ package wxpayslim
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
 	"crypto/md5"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
@@ -126,11 +128,19 @@ func (client *Client) postXml(ctx context.Context, url string, object requestabl
 }
 
 func (client Client) generateSign(object interface{}) string {
-	str := structToString(object) + "&key=" + client.Key
+	str, signType := generateStringToSign(object, client.Key)
 	if client.Debug {
+		log.Println("sign type", signType)
 		log.Println("string to sign", str)
 	}
-	return fmt.Sprintf("%X", md5.Sum([]byte(str)))
+	if signType == "HMAC-SHA256" {
+		h := hmac.New(sha256.New, []byte(client.Key))
+		h.Write([]byte(str))
+		return strings.ToUpper(hex.EncodeToString(h.Sum(nil)))
+	}
+	h := md5.New()
+	h.Write([]byte(str))
+	return strings.ToUpper(hex.EncodeToString(h.Sum(nil)))
 }
 
 type Response struct {
@@ -169,7 +179,7 @@ func copyFields(from, to interface{}) {
 	}
 }
 
-func structToString(s interface{}) string {
+func generateStringToSign(s interface{}, key string) (stringToSign, signType string) {
 	rv := reflect.ValueOf(s)
 	rt := reflect.TypeOf(s)
 	names := []string{}
@@ -204,6 +214,9 @@ func structToString(s interface{}) string {
 		}
 		names = append(names, name)
 		values[name] = fmt.Sprint(rv.Field(i).Interface())
+		if name == "sign_type" {
+			signType = values[name]
+		}
 	}
 	sort.Strings(names)
 	var buf bytes.Buffer
@@ -215,7 +228,10 @@ func structToString(s interface{}) string {
 		buf.WriteByte('=')
 		buf.WriteString(values[name])
 	}
-	return buf.String()
+	buf.WriteString("&key=")
+	buf.WriteString(key)
+	stringToSign = buf.String()
+	return
 }
 
 func randomStr(length int) string {
