@@ -3,10 +3,15 @@ package wxpayslim
 import (
 	"bytes"
 	"context"
+	"crypto"
 	"crypto/hmac"
 	"crypto/md5"
+	cryptoRand "crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
@@ -25,12 +30,15 @@ import (
 
 const prefix = "https://api.mch.weixin.qq.com"
 
+const applicationJson = "application/json"
+
 type Client struct {
 	MchId string
 	Key   string
 	Debug bool
 
-	TLSClientConfig *tls.Config
+	TLSClientConfig  *tls.Config
+	certSerialNumber string
 }
 
 // NewClient creates a new client.
@@ -48,15 +56,21 @@ func NewClient(mchId, key string) *Client {
 //
 // If you have p12 file (apiclient_cert.p12), you can use following command to
 // get certificate and private key:
-//     openssl pkcs12 -in apiclient_cert.p12 -nodes
+//
+//	openssl pkcs12 -in apiclient_cert.p12 -nodes
 func (client *Client) SetCertificate(certPEM, keyPem string) error {
 	cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPem))
+	if err != nil {
+		return err
+	}
+	x509cert, err := x509.ParseCertificate(cert.Certificate[0])
 	if err != nil {
 		return err
 	}
 	client.TLSClientConfig = &tls.Config{
 		Certificates: []tls.Certificate{cert},
 	}
+	client.certSerialNumber = strings.ToUpper(x509cert.SerialNumber.Text(16))
 	return nil
 }
 
@@ -73,9 +87,52 @@ type requestable interface {
 	toXml(client *Client) requestXml
 }
 
+type requestJson interface{}
+
+type jsonRequestable interface {
+	toJson(client *Client) requestJson
+}
+
 type responsible interface {
 	Success() bool
 	AsError() error
+}
+
+func (client *Client) postJson(ctx context.Context, url string, object jsonRequestable, res responsible) error {
+	jsonData, err := json.MarshalIndent(object.toJson(client), "", "  ")
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", applicationJson)
+	req.Header.Set("Content-Type", applicationJson)
+	auth, err := client.generateAuthorization(http.MethodPost, url, string(jsonData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", auth)
+	b, statusCode, err := client.post(req, jsonData)
+	if err != nil {
+		return err
+	}
+	err = json.Unmarshal(b, res)
+	if err != nil {
+		return err
+	}
+	if res.Success() {
+		if statusCode != 200 {
+			return JsonResponseError{
+				Code:    "UNKNOWN",
+				Message: "未知错误，状态：" + strconv.Itoa(statusCode),
+			}
+		}
+		return nil
+	} else {
+		return res.AsError()
+	}
 }
 
 func (client *Client) postXml(ctx context.Context, url string, object requestable, res responsible) error {
@@ -83,36 +140,11 @@ func (client *Client) postXml(ctx context.Context, url string, object requestabl
 	if err != nil {
 		return err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(xmlData))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(xmlData))
 	if err != nil {
 		return err
 	}
-	if client.Debug {
-		dump, err := httputil.DumpRequestOut(httpReq, true)
-		if err != nil {
-			return err
-		}
-		log.Println(string(dump))
-	}
-	httpClient := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: client.TLSClientConfig,
-		},
-	}
-	resp, err := httpClient.Do(httpReq)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if client.Debug {
-		dumpBody := strings.Contains(resp.Header.Get("Content-Type"), "text/")
-		dump, err := httputil.DumpResponse(resp, dumpBody)
-		if err != nil {
-			return err
-		}
-		log.Println(string(dump))
-	}
-	b, err := ioutil.ReadAll(resp.Body)
+	b, _, err := client.post(req, xmlData)
 	if err != nil {
 		return err
 	}
@@ -125,6 +157,37 @@ func (client *Client) postXml(ctx context.Context, url string, object requestabl
 	} else {
 		return res.AsError()
 	}
+}
+
+func (client *Client) post(httpReq *http.Request, reqData []byte) ([]byte, int, error) {
+	if client.Debug {
+		dump, err := httputil.DumpRequestOut(httpReq, true)
+		if err != nil {
+			return nil, 0, err
+		}
+		log.Println(string(dump))
+	}
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: client.TLSClientConfig,
+		},
+	}
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	if client.Debug {
+		contentType := resp.Header.Get("Content-Type")
+		dumpBody := strings.Contains(contentType, applicationJson) || strings.Contains(contentType, "text/")
+		dump, err := httputil.DumpResponse(resp, dumpBody)
+		if err != nil {
+			return nil, resp.StatusCode, err
+		}
+		log.Println(string(dump))
+	}
+	b, err := ioutil.ReadAll(resp.Body)
+	return b, resp.StatusCode, err
 }
 
 func (client Client) generateSign(object interface{}) string {
@@ -141,6 +204,54 @@ func (client Client) generateSign(object interface{}) string {
 	h := md5.New()
 	h.Write([]byte(str))
 	return strings.ToUpper(hex.EncodeToString(h.Sum(nil)))
+}
+
+func (client Client) generateAuthorization(method, url, reqBody string) (string, error) {
+	nonce := randomStr(32)
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	var signStr strings.Builder
+	signStr.WriteString(method)
+	signStr.WriteString("\n")
+	signStr.WriteString(url[len(prefix):])
+	signStr.WriteString("\n")
+	signStr.WriteString(timestamp)
+	signStr.WriteString("\n")
+	signStr.WriteString(nonce)
+	signStr.WriteString("\n")
+	signStr.WriteString(reqBody)
+	signStr.WriteString("\n")
+
+	sign, err := client.sha256rsa2048sign([]byte(signStr.String()))
+	if err != nil {
+		return "", err
+	}
+
+	var authStr strings.Builder
+	authStr.WriteString("WECHATPAY2-SHA256-RSA2048 ")
+	authStr.WriteString(`mchid="`)
+	authStr.WriteString(client.MchId)
+	authStr.WriteString(`",`)
+	authStr.WriteString(`nonce_str="`)
+	authStr.WriteString(nonce)
+	authStr.WriteString(`",`)
+	authStr.WriteString(`signature="`)
+	authStr.WriteString(base64.StdEncoding.EncodeToString(sign))
+	authStr.WriteString(`",`)
+	authStr.WriteString(`timestamp="`)
+	authStr.WriteString(timestamp)
+	authStr.WriteString(`",`)
+	authStr.WriteString(`serial_no="`)
+	authStr.WriteString(client.certSerialNumber)
+	authStr.WriteString(`"`)
+
+	return authStr.String(), nil
+}
+
+func (client Client) sha256rsa2048sign(data []byte) ([]byte, error) {
+	h := crypto.SHA256.New()
+	h.Write(data)
+	pk := client.TLSClientConfig.Certificates[0].PrivateKey.(*rsa.PrivateKey)
+	return rsa.SignPKCS1v15(cryptoRand.Reader, pk, crypto.SHA256, h.Sum(nil))
 }
 
 type Response struct {
@@ -167,6 +278,21 @@ func (r ResponseError) Error() string {
 		return "UNKNOWN"
 	}
 	return r.ErrCode + ": " + r.ErrCodeDes
+}
+
+type JsonResponse struct {
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+func (r JsonResponse) Success() bool {
+	return r.Code == ""
+}
+
+type JsonResponseError JsonResponse
+
+func (r JsonResponseError) Error() string {
+	return r.Code + ": " + r.Message
 }
 
 func copyFields(from, to interface{}) {

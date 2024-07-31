@@ -3,11 +3,14 @@ package wxpayslim
 import (
 	"context"
 	"encoding/xml"
+	"time"
 )
 
 const (
 	transferUrl      = prefix + "/mmpaymkttransfers/promotion/transfers"
 	transferQueryUrl = prefix + "/mmpaymkttransfers/gettransferinfo"
+
+	v3TransferUrl = prefix + "/v3/transfer/batches"
 )
 
 // Transfer money to user. Docs:
@@ -137,4 +140,90 @@ var _ responsible = (*TransferQueryResponse)(nil)
 
 func (r TransferQueryResponse) AsError() error {
 	return ResponseError(r.Response)
+}
+
+// Transfer money to user. Docs:
+// https://pay.weixin.qq.com/docs/merchant/apis/batch-transfer-to-balance/transfer-batch/initiate-batch-transfer.html
+func (client *Client) TransferV3(ctx context.Context, req V3TransferRequests) (*V3TransferResponse, error) {
+	var res V3TransferResponse
+	if err := client.postJson(ctx, v3TransferUrl, req, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+// V3TransferRequests is used in TransferV3() function.
+type V3TransferRequests struct {
+	AppId           string              // required
+	OutBatchNo      string              // required
+	BatchName       string              // required
+	BatchRemark     string              // required
+	TransferSceneId string              // optional
+	NotifyUrl       string              // optional
+	Transfers       []V3TransferRequest // required
+}
+
+type V3TransferRequest struct {
+	OutDetailNo    string
+	TransferAmount int
+	TransferRemark string
+	OpenId         string
+	UserName       string
+}
+
+var _ jsonRequestable = (*V3TransferRequests)(nil)
+
+func (r V3TransferRequests) toJson(client *Client) requestJson {
+	req := transferRequestJson{}
+	req.AppId = r.AppId
+	req.OutBatchNo = r.OutBatchNo
+	req.BatchName = r.BatchName
+	req.BatchRemark = r.BatchRemark
+	req.TransferSceneId = r.TransferSceneId
+	req.NotifyUrl = r.NotifyUrl
+	req.TransferDetailList = make([]v3TransferDetail, len(r.Transfers))
+	for i := range r.Transfers {
+		req.TransferDetailList[i].OutDetailNo = r.Transfers[i].OutDetailNo
+		req.TransferDetailList[i].TransferAmount = r.Transfers[i].TransferAmount
+		req.TransferDetailList[i].TransferRemark = r.Transfers[i].TransferRemark
+		req.TransferDetailList[i].OpenId = r.Transfers[i].OpenId
+		req.TransferDetailList[i].UserName = r.Transfers[i].UserName
+		req.TotalAmount += r.Transfers[i].TransferAmount
+		req.TotalNum += 1
+	}
+	return req
+}
+
+type transferRequestJson struct {
+	AppId              string             `json:"appid"`
+	OutBatchNo         string             `json:"out_batch_no"`
+	BatchName          string             `json:"batch_name"`
+	BatchRemark        string             `json:"batch_remark"`
+	TotalAmount        int                `json:"total_amount"`
+	TotalNum           int                `json:"total_num"`
+	TransferDetailList []v3TransferDetail `json:"transfer_detail_list"`
+	TransferSceneId    string             `json:"transfer_scene_id,omitempty"`
+	NotifyUrl          string             `json:"notify_url,omitempty"`
+}
+
+type v3TransferDetail struct {
+	OutDetailNo    string `json:"out_detail_no"`
+	TransferAmount int    `json:"transfer_amount"`
+	TransferRemark string `json:"transfer_remark"`
+	OpenId         string `json:"openid"`
+	UserName       string `json:"user_name,omitempty"`
+}
+
+type V3TransferResponse struct {
+	JsonResponse
+	OutBatchNo  string    `json:"out_batch_no"`
+	BatchId     string    `json:"batch_id"`
+	CreateTime  time.Time `json:"create_time"`
+	BatchStatus string    `json:"batch_status"`
+}
+
+var _ responsible = (*V3TransferResponse)(nil)
+
+func (r V3TransferResponse) AsError() error {
+	return JsonResponseError(r.JsonResponse)
 }
